@@ -1,0 +1,71 @@
+name: Daily Report to Slack
+
+on:
+  schedule:
+    - cron: '0 23 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Daily Report to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          python3 << 'PYEOF'
+          import urllib.request, json, re, os
+          from datetime import datetime, timezone, timedelta
+
+          JST = timezone(timedelta(hours=9))
+          today = datetime.now(JST).strftime('%Y/%m/%d')
+
+          # S&P500
+          try:
+              req = urllib.request.Request('https://finance.yahoo.co.jp/quote/%5EGSPC', headers={'User-Agent': 'Mozilla/5.0'})
+              html = urllib.request.urlopen(req, timeout=15).read().decode('utf-8')
+              nums = re.findall(r'\d{1,2},\d{3}\.\d{2}', html)
+              sp500 = f"現在値: {nums[0]}" if nums else "データ取得中"
+          except Exception as e:
+              sp500 = f"取得エラー: {e}"
+
+          # AIニュース
+          try:
+              req2 = urllib.request.Request('https://news.google.com/rss/search?q=artificial+intelligence&hl=ja&gl=JP&ceid=JP:ja', headers={'User-Agent': 'Mozilla/5.0'})
+              rss = urllib.request.urlopen(req2, timeout=15).read().decode('utf-8')
+              titles = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', rss)[1:21]
+              links = re.findall(r'<link>(https?://[^<]+)</link>', rss)[:20]
+              ai_news = '\n'.join([f"{i+1}. {t}\n   {l}" for i,(t,l) in enumerate(zip(titles,links))])
+          except Exception as e:
+              ai_news = f"取得エラー: {e}"
+
+          # 国際ニュース
+          try:
+              req3 = urllib.request.Request('https://feeds.reuters.com/reuters/businessNews', headers={'User-Agent': 'Mozilla/5.0'})
+              rss2 = urllib.request.urlopen(req3, timeout=15).read().decode('utf-8')
+              titles2 = re.findall(r'<title><!\[CDATA\[(.*?)\]\]></title>', rss2)[1:21]
+              links2 = re.findall(r'<link>(https?://[^<]+)</link>', rss2)[:20]
+              world_news = '\n'.join([f"{i+1}. {t}\n   {l}" for i,(t,l) in enumerate(zip(titles2,links2))])
+          except Exception as e:
+              world_news = f"取得エラー: {e}"
+
+          msg = f"""📰 *デイリーレポート（{today}）*
+
+📈 *S&P 500*
+{sp500}
+🔗 https://finance.yahoo.co.jp/quote/%5EGSPC
+
+---
+
+🤖 *AI関連ニュース TOP20*
+{ai_news}
+
+---
+
+🌍 *S&P500関連 国際ニュース TOP20*
+{world_news}"""
+
+          data = json.dumps({'text': msg}).encode('utf-8')
+          req4 = urllib.request.Request(os.environ['SLACK_WEBHOOK_URL'], data=data, headers={'Content-Type': 'application/json; charset=utf-8'})
+          print(urllib.request.urlopen(req4, timeout=30).read().decode())
+          PYEOF
