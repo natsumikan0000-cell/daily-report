@@ -9,6 +9,9 @@ jobs:
   send-report:
     runs-on: ubuntu-latest
     steps:
+      - name: Install dependencies
+        run: pip install deep-translator
+
       - name: Send Daily Report to Slack
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -16,10 +19,17 @@ jobs:
           python3 -c "
           import urllib.request, json, re, os
           from datetime import datetime, timezone, timedelta
+          from deep_translator import GoogleTranslator
+
           JST = timezone(timedelta(hours=9))
           today = datetime.now(JST).strftime('%Y/%m/%d')
-
           headers = {'User-Agent': 'Mozilla/5.0 (compatible; Googlebot/2.1)'}
+
+          def translate(text):
+              try:
+                  return GoogleTranslator(source='en', target='ja').translate(text[:500])
+              except:
+                  return text
 
           # S&P500
           try:
@@ -30,14 +40,18 @@ jobs:
           except Exception as e:
               sp500 = '取得エラー: ' + str(e)
 
-          # AIニュース (TechCrunch AI)
+          # AIニュース (TechCrunch)
           try:
               req2 = urllib.request.Request('https://techcrunch.com/category/artificial-intelligence/feed/', headers=headers)
               rss = urllib.request.urlopen(req2, timeout=15).read().decode('utf-8')
               titles = re.findall(r'<title>(.*?)</title>', rss, re.DOTALL)
               titles = [re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', t).strip() for t in titles[1:21]]
               links = re.findall(r'<link>(https?://[^<]+)</link>', rss)[:20]
-              ai_news = '\n'.join([str(i+1) + '. ' + t + ('\n   ' + l if i < len(links) else '') for i,(t,l) in enumerate(zip(titles, links + [''] * 20))])
+              ai_lines = []
+              for i, (t, l) in enumerate(zip(titles, links)):
+                  jp = translate(t)
+                  ai_lines.append(str(i+1) + '. ' + jp + '\n   ' + l)
+              ai_news = '\n'.join(ai_lines)
           except Exception as e:
               ai_news = '取得エラー: ' + str(e)
 
@@ -48,11 +62,15 @@ jobs:
               titles2 = re.findall(r'<title>(.*?)</title>', rss2, re.DOTALL)
               titles2 = [re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', t).strip() for t in titles2[1:21]]
               links2 = re.findall(r'<link>(https?://[^<]+)</link>', rss2)[:20]
-              world_news = '\n'.join([str(i+1) + '. ' + t + ('\n   ' + l if i < len(links2) else '') for i,(t,l) in enumerate(zip(titles2, links2 + [''] * 20))])
+              world_lines = []
+              for i, (t, l) in enumerate(zip(titles2, links2)):
+                  jp = translate(t)
+                  world_lines.append(str(i+1) + '. ' + jp + '\n   ' + l)
+              world_news = '\n'.join(world_lines)
           except Exception as e:
               world_news = '取得エラー: ' + str(e)
 
-          msg = '📰 *デイリーレポート（' + today + '）*\n\n📈 *S&P 500*\n' + sp500 + '\n🔗 https://finance.yahoo.co.jp/quote/%5EGSPC\n\n---\n\n🤖 *AI関連ニュース TOP20（TechCrunch）*\n' + ai_news + '\n\n---\n\n🌍 *国際経済ニュース TOP20（BBC）*\n' + world_news
+          msg = '📰 *デイリーレポート（' + today + '）*\n\n📈 *S&P 500*\n' + sp500 + '\n🔗 https://finance.yahoo.co.jp/quote/%5EGSPC\n\n---\n\n🤖 *AI関連ニュース TOP20（日本語訳）*\n' + ai_news + '\n\n---\n\n🌍 *国際経済ニュース TOP20（日本語訳）*\n' + world_news
           data = json.dumps({'text': msg}).encode('utf-8')
           req4 = urllib.request.Request(os.environ['SLACK_WEBHOOK_URL'], data=data, headers={'Content-Type': 'application/json; charset=utf-8'})
           print(urllib.request.urlopen(req4, timeout=30).read().decode())
